@@ -6,23 +6,31 @@ on:
     paths:
       - ".github/workflows/build-windows.yml"
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: windows-2025-vs2026
+    timeout-minutes: 60
 
     steps:
       - name: Lay ma nguon
         uses: actions/checkout@v4
 
-      - name: Cai MSBuild Visual Studio 2026
+      - name: Cai MSBuild v145
         uses: microsoft/setup-msbuild@v2
         with:
           vs-version: "[18.0,19.0)"
+          msbuild-architecture: x64
 
-      - name: Build ComputeShaders Release x64
+      - name: Build ComputeShaders
         shell: pwsh
         run: |
-          $shaderProject = Get-ChildItem -Path . -Recurse -Filter "ComputeShaders.vcxproj" |
+          $shaderProject = Get-ChildItem `
+            -Path . `
+            -Recurse `
+            -Filter "ComputeShaders.vcxproj" |
             Select-Object -First 1
 
           if (-not $shaderProject) {
@@ -41,21 +49,15 @@ jobs:
             exit $LASTEXITCODE
           }
 
-          $shaderOutput = Join-Path `
-            $shaderProject.Directory.FullName `
-            "x64\Release"
-
-          if (-not (Test-Path $shaderOutput)) {
-            throw "Khong tao duoc thu muc shader: $shaderOutput"
-          }
-
-          Write-Host "Da tao shader tai: $shaderOutput"
-          Get-ChildItem $shaderOutput
+          Write-Host "Build ComputeShaders thanh cong."
 
       - name: Build va chay CompressShaders
         shell: pwsh
         run: |
-          $project = Get-ChildItem -Path . -Recurse -Filter "CompressShaders.csproj" |
+          $project = Get-ChildItem `
+            -Path . `
+            -Recurse `
+            -Filter "CompressShaders.csproj" |
             Select-Object -First 1
 
           if (-not $project) {
@@ -73,29 +75,51 @@ jobs:
             exit $LASTEXITCODE
           }
 
-          $tool = Get-ChildItem -Path $project.Directory.FullName `
-            -Recurse -Filter "CompressShaders.exe" |
-            Where-Object { $_.FullName -match "\\Release\\" } |
+          $tool = Get-ChildItem `
+            -Path $project.Directory.FullName `
+            -Recurse `
+            -Filter "CompressShaders.exe" |
+            Where-Object {
+              $_.FullName -match "\\Release\\"
+            } |
             Select-Object -First 1
 
           if (-not $tool) {
             throw "Khong tim thay CompressShaders.exe sau khi build"
           }
 
-          Write-Host "Dang chay: $($tool.FullName)"
+          Write-Host "Dang chay CompressShaders:"
+          Write-Host $tool.FullName
 
           Push-Location $tool.Directory.FullName
+
           & $tool.FullName
           $result = $LASTEXITCODE
+
           Pop-Location
 
           if ($result -ne 0) {
             exit $result
           }
 
+          Write-Host "CompressShaders da chay thanh cong."
+
       - name: Build WhisperDesktop Release x64
         shell: pwsh
         run: |
+          $apiDir = (Resolve-Path "Whisper\API").Path
+          $header = Join-Path $apiDir "whisperWindows.h"
+
+          if (-not (Test-Path $header)) {
+            throw "Khong tim thay file: $header"
+          }
+
+          Write-Host "Whisper API include: $apiDir"
+          Write-Host "Da tim thay: $header"
+
+          $env:INCLUDE = "$apiDir;$env:INCLUDE"
+          $env:CL = "/I`"$apiDir`" $env:CL"
+
           msbuild "Examples\WhisperDesktop\WhisperDesktop.vcxproj" `
             /restore `
             /m `
@@ -107,18 +131,33 @@ jobs:
             exit $LASTEXITCODE
           }
 
+          Write-Host "Build WhisperDesktop thanh cong."
+
       - name: Dong goi chuong trinh
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "artifact" |
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path "artifact" |
             Out-Null
 
-          $exe = Get-ChildItem -Path . -Recurse -Filter "WhisperDesktop.exe" |
-            Where-Object { $_.FullName -match "\\Release\\" } |
+          $exe = Get-ChildItem `
+            -Path . `
+            -Recurse `
+            -Filter "WhisperDesktop.exe" |
+            Where-Object {
+              $_.FullName -match "\\Release\\"
+            } |
             Select-Object -First 1
 
-          $dll = Get-ChildItem -Path . -Recurse -Filter "Whisper.dll" |
-            Where-Object { $_.FullName -match "\\Release\\" } |
+          $dll = Get-ChildItem `
+            -Path . `
+            -Recurse `
+            -Filter "Whisper.dll" |
+            Where-Object {
+              $_.FullName -match "\\Release\\"
+            } |
             Select-Object -First 1
 
           if (-not $exe) {
@@ -129,40 +168,50 @@ jobs:
             throw "Khong tim thay Whisper.dll"
           }
 
-          Write-Host "WhisperDesktop: $($exe.FullName)"
-          Write-Host "Whisper DLL: $($dll.FullName)"
+          Write-Host "WhisperDesktop.exe:"
+          Write-Host $exe.FullName
+
+          Write-Host "Whisper.dll:"
+          Write-Host $dll.FullName
 
           Copy-Item `
-            $exe.FullName `
-            "artifact\WhisperDesktop.exe" `
+            -LiteralPath $exe.FullName `
+            -Destination "artifact\WhisperDesktop.exe" `
             -Force
 
           Copy-Item `
-            $dll.FullName `
-            "artifact\Whisper.dll" `
+            -LiteralPath $dll.FullName `
+            -Destination "artifact\Whisper.dll" `
             -Force
 
           $otherDlls = Get-ChildItem `
             -Path $exe.Directory.FullName `
-            -Filter "*.dll"
+            -Filter "*.dll" `
+            -File
 
           foreach ($file in $otherDlls) {
-            Copy-Item $file.FullName "artifact" -Force
+            Copy-Item `
+              -LiteralPath $file.FullName `
+              -Destination "artifact" `
+              -Force
           }
 
-          @"
-          Ban build tu:
-          https://github.com/sffxzzp/WhisperDesktop
+          $buildInfo = @(
+            "WhisperDesktop Windows x64"
+            ""
+            "Ma nguon:"
+            "https://github.com/sffxzzp/WhisperDesktop"
+            ""
+            "Cau hinh:"
+            "Release x64"
+            "Ho tro Large-v3 va model quantized Q5/Q8."
+            "Model khong duoc kem trong goi nay."
+          )
 
-          Cau hinh:
-          Release x64
-          Visual Studio 2026
-          Platform Toolset v145
-          Co ho tro Large-v3 va model quantized Q5/Q8.
-          Model khong duoc kem trong goi nay.
-          "@ | Set-Content `
-            -Path "artifact\BUILD-INFO.txt" `
-            -Encoding UTF8
+          $buildInfo |
+            Set-Content `
+              -Path "artifact\BUILD-INFO.txt" `
+              -Encoding UTF8
 
           Write-Host "Cac file se duoc tai len:"
           Get-ChildItem "artifact"
