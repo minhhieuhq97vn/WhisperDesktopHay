@@ -1,0 +1,120 @@
+name: Build WhisperDesktop Large V3
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-windows.yml"
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Lay ma nguon
+        uses: actions/checkout@v4
+
+      - name: Cai MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build va chay CompressShaders
+        shell: pwsh
+        run: |
+          $project = Get-ChildItem -Path . -Recurse -Filter "CompressShaders.csproj" |
+            Select-Object -First 1
+
+          if (-not $project) {
+            throw "Khong tim thay CompressShaders.csproj"
+          }
+
+          Write-Host "CompressShaders project: $($project.FullName)"
+
+          msbuild $project.FullName /restore /m /p:Configuration=Release
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          $tool = Get-ChildItem -Path $project.Directory.FullName `
+            -Recurse -Filter "CompressShaders.exe" |
+            Where-Object { $_.FullName -match "\\Release\\" } |
+            Select-Object -First 1
+
+          if (-not $tool) {
+            throw "Khong tim thay CompressShaders.exe sau khi build"
+          }
+
+          Write-Host "Dang chay: $($tool.FullName)"
+
+          Push-Location $tool.Directory.FullName
+          & $tool.FullName
+          $result = $LASTEXITCODE
+          Pop-Location
+
+          if ($result -ne 0) {
+            exit $result
+          }
+
+      - name: Build WhisperDesktop Release x64
+        shell: pwsh
+        run: |
+          msbuild "Examples\WhisperDesktop\WhisperDesktop.vcxproj" `
+            /restore `
+            /m `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:BuildProjectReferences=true
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Dong goi chuong trinh
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "artifact" | Out-Null
+
+          $exe = Get-ChildItem -Path . -Recurse -Filter "WhisperDesktop.exe" |
+            Where-Object { $_.FullName -match "\\Release\\" } |
+            Select-Object -First 1
+
+          $dll = Get-ChildItem -Path . -Recurse -Filter "Whisper.dll" |
+            Where-Object { $_.FullName -match "\\Release\\" } |
+            Select-Object -First 1
+
+          if (-not $exe) {
+            throw "Khong tim thay WhisperDesktop.exe"
+          }
+
+          if (-not $dll) {
+            throw "Khong tim thay Whisper.dll"
+          }
+
+          Copy-Item $exe.FullName "artifact\WhisperDesktop.exe"
+          Copy-Item $dll.FullName "artifact\Whisper.dll"
+
+          $otherDlls = Get-ChildItem -Path $exe.Directory.FullName -Filter "*.dll"
+
+          foreach ($file in $otherDlls) {
+            Copy-Item $file.FullName "artifact" -Force
+          }
+
+          @"
+          Ban build tu:
+          https://github.com/sffxzzp/WhisperDesktop
+
+          Cau hinh:
+          Release x64
+          Co ho tro Large-v3 va model quantized Q5/Q8.
+          Model khong duoc kem trong goi nay.
+          "@ | Set-Content -Path "artifact\BUILD-INFO.txt" -Encoding UTF8
+
+          Get-ChildItem "artifact"
+
+      - name: Tai artifact len GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: WhisperDesktop-LargeV3-Windows-x64
+          path: artifact
+          if-no-files-found: error
+          retention-days: 7
