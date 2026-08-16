@@ -17,6 +17,39 @@ jobs:
       - name: Cai MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      - name: Build ComputeShaders Release x64
+        shell: pwsh
+        run: |
+          $shaderProject = Get-ChildItem -Path . -Recurse -Filter "ComputeShaders.vcxproj" |
+            Select-Object -First 1
+
+          if (-not $shaderProject) {
+            throw "Khong tim thay ComputeShaders.vcxproj"
+          }
+
+          Write-Host "ComputeShaders project: $($shaderProject.FullName)"
+
+          msbuild $shaderProject.FullName `
+            /restore `
+            /m `
+            /p:Configuration=Release `
+            /p:Platform=x64
+
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+          $shaderOutput = Join-Path `
+            $shaderProject.Directory.FullName `
+            "x64\Release"
+
+          if (-not (Test-Path $shaderOutput)) {
+            throw "Khong tao duoc thu muc shader: $shaderOutput"
+          }
+
+          Write-Host "Da tao shader tai: $shaderOutput"
+          Get-ChildItem $shaderOutput
+
       - name: Build va chay CompressShaders
         shell: pwsh
         run: |
@@ -29,7 +62,10 @@ jobs:
 
           Write-Host "CompressShaders project: $($project.FullName)"
 
-          msbuild $project.FullName /restore /m /p:Configuration=Release
+          msbuild $project.FullName `
+            /restore `
+            /m `
+            /p:Configuration=Release
 
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
@@ -72,7 +108,8 @@ jobs:
       - name: Dong goi chuong trinh
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "artifact" | Out-Null
+          New-Item -ItemType Directory -Force -Path "artifact" |
+            Out-Null
 
           $exe = Get-ChildItem -Path . -Recurse -Filter "WhisperDesktop.exe" |
             Where-Object { $_.FullName -match "\\Release\\" } |
@@ -90,10 +127,22 @@ jobs:
             throw "Khong tim thay Whisper.dll"
           }
 
-          Copy-Item $exe.FullName "artifact\WhisperDesktop.exe"
-          Copy-Item $dll.FullName "artifact\Whisper.dll"
+          Write-Host "WhisperDesktop: $($exe.FullName)"
+          Write-Host "Whisper DLL: $($dll.FullName)"
 
-          $otherDlls = Get-ChildItem -Path $exe.Directory.FullName -Filter "*.dll"
+          Copy-Item `
+            $exe.FullName `
+            "artifact\WhisperDesktop.exe" `
+            -Force
+
+          Copy-Item `
+            $dll.FullName `
+            "artifact\Whisper.dll" `
+            -Force
+
+          $otherDlls = Get-ChildItem `
+            -Path $exe.Directory.FullName `
+            -Filter "*.dll"
 
           foreach ($file in $otherDlls) {
             Copy-Item $file.FullName "artifact" -Force
@@ -107,8 +156,11 @@ jobs:
           Release x64
           Co ho tro Large-v3 va model quantized Q5/Q8.
           Model khong duoc kem trong goi nay.
-          "@ | Set-Content -Path "artifact\BUILD-INFO.txt" -Encoding UTF8
+          "@ | Set-Content `
+            -Path "artifact\BUILD-INFO.txt" `
+            -Encoding UTF8
 
+          Write-Host "Cac file se duoc tai len:"
           Get-ChildItem "artifact"
 
       - name: Tai artifact len GitHub
